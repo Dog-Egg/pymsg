@@ -99,7 +99,7 @@ class DingTalkRobot:
 
     @staticmethod
     def _format_at(at):
-        if isinstance(at, Iterable):
+        if isinstance(at, Iterable) and not isinstance(at, str):
             return [str(x) for x in at]
         return [] if at is None else [str(at)]
 
