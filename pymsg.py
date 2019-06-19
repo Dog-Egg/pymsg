@@ -5,24 +5,28 @@ import time
 from collections.abc import Iterable
 from queue import Queue
 from pprint import pformat
+from itertools import chain
 
 import requests
 
 __all__ = ['DingTalkRobot']
 
 
+def _prepend(value, iterable):
+    return chain([value], iterable)
+
+
+class SendFailure(Exception):
+    pass
+
+
 class DingTalkRobot:
     _instances = {}
 
     def __new__(cls, webhook, *args, **kwargs):
-        k = hash(webhook)
-        if k not in cls._instances:
-            cls._instances[k] = super().__new__(cls)
-        return cls._instances[k]
+        if webhook not in cls._instances:
+            self = super().__new__(cls)
 
-    def __init__(self, webhook):
-        if not getattr(self, '_inited', False):
-            self._inited = True
             self._webhook = webhook
             self._t = time.time()
             self._cache_q = Queue(20)
@@ -34,6 +38,9 @@ class DingTalkRobot:
             handler.setFormatter(logging.Formatter('[%(levelname)s %(asctime)s %(name)s] %(message)s', '%F %H:%M:%S'))
             logger.addHandler(handler)
             self.logger = logger
+
+            cls._instances[webhook] = self
+        return cls._instances[webhook]
 
     @property
     def webhook(self):
@@ -52,7 +59,12 @@ class DingTalkRobot:
         except json.JSONDecodeError:
             return False
         else:
-            return content['errmsg'] == 'ok' and content['errcode'] == 0
+            errcode, errmsg = content['errcode'], content['errmsg']
+            # 0: ok
+            # 130101: send too fast
+            if errcode not in (0, 130101):
+                raise SendFailure(errmsg)
+            return errcode == 0
 
     def _send(self, data):
         if self._http_post(data):
@@ -130,10 +142,10 @@ class DingTalkRobot:
         self._msg_queue(data)
 
     def action_card(self, title, text, btn, *btns, btns_vertically=True, hide_avatar=False):
-        if not len(btns):
+        if not btns:
             btns = {'singleTitle': btn[0], 'singleURL': btn[1]}
         else:
-            btns = {'btns': [{'title': b[0], 'actionURL': b[1]} for b in [btn] + list(btns)]}
+            btns = {'btns': [{'title': b[0], 'actionURL': b[1]} for b in _prepend(btn, btns)]}
         data = {
             "actionCard": {
                 "title": title,
@@ -147,7 +159,6 @@ class DingTalkRobot:
         self._msg_queue(data)
 
     def feed_card(self, card, *cards):
-        cards = [card] + list(cards)
         data = {
             "feedCard": {
                 "links": [
@@ -155,7 +166,7 @@ class DingTalkRobot:
                         "title": c[0],
                         "messageURL": c[1],
                         "picURL": c[2]
-                    } for c in cards
+                    } for c in _prepend(card, cards)
                 ]
             },
             "msgtype": "feedCard"

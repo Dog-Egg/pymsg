@@ -2,7 +2,7 @@ from pymsg import DingTalkRobot
 
 
 def test_ding_talk():
-    webhook = 'https://oapi.dingtalk.com/robot/send?access_token=265448b813c44ee0dc251799cb9c9c56f7bec510831eb8bf8ceadbc7791f9c89'
+    webhook = 'https://oapi.dingtalk.com/robot/send?access_token=248882788a58145bb11ae618dda95a1fca3859e4f29a1ee04ce42b6c225de9cd'
     msg = DingTalkRobot(webhook)
 
     msg.text('我就是我,  @1825718XXXX 是不一样的烟火', at_all=True)
