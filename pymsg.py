@@ -52,10 +52,15 @@ class DingTalkRobot:
         self._cache_q.maxsize = size
 
     def _http_post(self, data):
-        response = requests.post(self._webhook, json=data)
-        self.logger.debug('response body: %s' % response.text)
         try:
-            content = json.loads(response.content)
+            response = requests.post(self._webhook, json=data)
+        except Exception as exc:
+            raise SendFailure(exc) from exc
+
+        self.logger.debug('response body: %s', response.text)
+
+        try:
+            content = response.json()
         except json.JSONDecodeError:
             return False
         else:

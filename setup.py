@@ -5,7 +5,7 @@ with open('README.md') as f:
 
 setuptools.setup(
     name='pymsg',
-    version='0.1.2',
+    version='0.1.3',
     url='https://github.com/Dog-Egg/pymsg',
     long_description=long_description,
     long_description_content_type="text/markdown",
