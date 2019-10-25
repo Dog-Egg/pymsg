@@ -1,15 +1,13 @@
 import json
-import logging
 import threading
 import time
+from collections import deque
 from collections.abc import Iterable
-from queue import Queue
-from pprint import pformat
 from itertools import chain
 
 import requests
 
-__all__ = ['DingTalkRobot']
+__all__ = ['DingTalkRobot', 'SendFailure']
 
 
 def _prepend(value, iterable):
@@ -22,42 +20,30 @@ class SendFailure(Exception):
 
 class DingTalkRobot:
     _instances = {}
+    _cls_lock = threading.Lock()
+    _t: float
 
     def __new__(cls, webhook, *args, **kwargs):
-        if webhook not in cls._instances:
-            self = super().__new__(cls)
+        with cls._cls_lock:
+            if webhook not in cls._instances:
+                self = super().__new__(cls)
+                self._webhook = webhook
+                self._t = 0
+                self._queue = deque()
+                self._lock = threading.Lock()
 
-            self._webhook = webhook
-            self._t = time.time()
-            self._cache_q = Queue(20)
-            self._mutex = threading.Lock()
-
-            logger = logging.getLogger('DingTalkRobot(%s)' % self._webhook[-7:])
-            logger.setLevel(logging.INFO)
-            handler = logging.StreamHandler()
-            handler.setFormatter(logging.Formatter('[%(levelname)s %(asctime)s %(name)s] %(message)s', '%F %H:%M:%S'))
-            logger.addHandler(handler)
-            self.logger = logger
-
-            cls._instances[webhook] = self
-        return cls._instances[webhook]
+                cls._instances[webhook] = self
+            return cls._instances[webhook]
 
     @property
     def webhook(self):
         return self._webhook
 
-    def set_cache_size(self, size):
-        if not isinstance(size, int):
-            raise TypeError('require an integer')
-        self._cache_q.maxsize = size
-
-    def _http_post(self, data):
+    def _send(self, data):
         try:
             response = requests.post(self._webhook, json=data)
         except Exception as exc:
             raise SendFailure(exc) from exc
-
-        self.logger.debug('response body: %s', response.text)
 
         try:
             content = response.json()
@@ -71,35 +57,19 @@ class DingTalkRobot:
                 raise SendFailure(errmsg)
             return errcode == 0
 
-    def _send(self, data):
-        if self._http_post(data):
-            return True
-        else:
-            self._t = time.time() + 60
-            return False
+    def send(self, data=None):
+        with self._lock:
+            if data is not None:
+                self._queue.append(data)
 
-    def _msg_queue(self, data):
-        with self._mutex:
             if self._t < time.time():
-                can_send = True
-
-                while can_send and not self._cache_q.empty():
-                    if self._send(self._cache_q.queue[0]):
-                        self._cache_q.get_nowait()
+                while self._queue:
+                    if self._send(self._queue[0]):
+                        self._queue.popleft()
                     else:
-                        can_send = False
-
-                if not can_send or not self._send(data):
-                    self._add_to_cache(data)
-            else:
-                self._add_to_cache(data)
-
-    def _add_to_cache(self, data):
-        if self._cache_q.full():
-            self.logger.warning('消息发送频率过高，缓存队列已满，该消息丢失\t%s' % pformat(data))
-        else:
-            self._cache_q.put_nowait(data)
-            self.logger.info('消息已加入缓存队列\t%s' % pformat(data))
+                        self._t = time.time() + 60
+                        break
+            return len(self._queue)
 
     def text(self, content, at=None, at_all=False):
         data = {
@@ -112,7 +82,7 @@ class DingTalkRobot:
                 "isAtAll": at_all
             }
         }
-        self._msg_queue(data)
+        return self.send(data)
 
     @staticmethod
     def _format_at(at):
@@ -130,7 +100,7 @@ class DingTalkRobot:
                 "messageUrl": msg_url
             }
         }
-        self._msg_queue(data)
+        return self.send(data)
 
     def markdown(self, title, text, at=None, at_all=False):
         data = {
@@ -144,7 +114,7 @@ class DingTalkRobot:
                 "isAtAll": at_all
             }
         }
-        self._msg_queue(data)
+        return self.send(data)
 
     def action_card(self, title, text, btn, *btns, btns_vertically=True, hide_avatar=False):
         if not btns:
@@ -161,7 +131,7 @@ class DingTalkRobot:
             },
             "msgtype": "actionCard"
         }
-        self._msg_queue(data)
+        return self.send(data)
 
     def feed_card(self, card, *cards):
         data = {
@@ -176,4 +146,4 @@ class DingTalkRobot:
             },
             "msgtype": "feedCard"
         }
-        self._msg_queue(data)
+        return self.send(data)
